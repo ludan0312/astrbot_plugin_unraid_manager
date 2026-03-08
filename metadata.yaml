@@ -1,8 +1,9 @@
 # unraid_manager/metadata.yaml
-name: unraid_manager
-desc: Unraid安全管理插件 - 阵列监护模块
+name: astrbot_plugin_unraid_manager
+desc: 为 AstrBot 提供 Unraid NAS 安全管理功能，支持阵列状态监控、磁盘温度告警、Docker 资源查看。只读操作，禁止危险指令，守护数据安全。支持自然语言交互。
 version: 1.0.0
 author: ludan
+repo: https://github.com/ludan0312/astrbot_plugin_unraid_manager
 support_platforms:
   - aiocqhttp
   - qq_official
