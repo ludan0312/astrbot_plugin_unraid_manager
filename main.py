@@ -1,20 +1,17 @@
 # unraid_manager/main.py
-import asyncio
 import re
 import os
-from typing import Optional, Dict, Any, List
-from datetime import datetime
+from typing import Dict
 
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger
-import astrbot.api.message_components as Comp
 
 from .unraid_client import UnraidClient
 from .docker_helper import DockerHelper
 
 
-@register("unraid_manager", "ludan", "Unraid安全管理插件", "1.0.0")
+@register("unraid_manager", "ludan", "Unraid安全管理插件", "1.2.0")
 class UnraidManager(Star):
     """Unraid阵列监护模块 - 只读优先，安全第一"""
     
@@ -23,12 +20,12 @@ class UnraidManager(Star):
         self.config = config or {}
         
         # Unraid连接配置（优先环境变量，其次配置文件）
-        self.unraid_host = self.config.get("unraid_host") or os.getenv("UNRAID_HOST", "http://your-unraid-ip")
+        self.unraid_host = self.config.get("unraid_host") or os.getenv("UNRAID_HOST", "")
         self.unraid_port = int(self.config.get("unraid_port") or os.getenv("UNRAID_PORT", "80"))
         self.api_key = self.config.get("api_key") or os.getenv("UNRAID_API_KEY", "")
         self.temp_threshold = int(self.config.get("temp_threshold", 45))
         
-        # 初始化客户端
+        # 初始化客户端（允许无配置初始化）
         self.unraid = UnraidClient(
             host=self.unraid_host,
             port=self.unraid_port,
@@ -36,7 +33,11 @@ class UnraidManager(Star):
         )
         self.docker = DockerHelper()
         
+        # 检查配置状态
+        self._config_ready = bool(self.unraid_host and self.unraid_host != "http://your-unraid-ip")
+        
         # 自然语言匹配模式（支持口语化查询）
+        # 注意：为避免误触发，通用词如"cpu"、"内存"、"温度"需组合其他关键词使用
         self.intent_patterns = {
             "array_status": [
                 r"阵列", r"硬盘.*状态", r"磁盘.*状态", r"unraid",
@@ -46,7 +47,7 @@ class UnraidManager(Star):
             "disk_temp": [
                 r"硬盘.*温度", r"磁盘.*温度", r"温度.*多少", r"热不热",
                 r"硬盘.*烫", r"磁盘.*烫", r"温度.*高", r"温度.*怎样",
-                r"硬盘.*热", r"磁盘.*热", r"温度"
+                r"硬盘.*热", r"磁盘.*热", r"阵列.*温度"
             ],
             "docker_status": [
                 r"docker", r"容器", r"container",
@@ -56,21 +57,26 @@ class UnraidManager(Star):
             "hardware_info": [
                 r"硬件.*信息", r"系统.*信息", r"cpu.*信息", r"内存.*信息",
                 r"主板.*信息", r"硬件.*配置", r"系统.*配置", r"server.*info",
-                r"硬件", r"系统信息", r"cpu", r"内存"
+                r"硬件.*状态"
             ]
         }
         
-        logger.info(f"Unraid监护模块已初始化 @ {self.unraid_host}")
+        # 快速过滤关键词（必须在消息中同时包含）
+        self.unraid_keywords = ["unraid", "阵列", "硬盘", "磁盘", "服务器", 
+                               "docker", "容器", "硬件", "raid", "存储"]
+        
+        if self._config_ready:
+            logger.info(f"Unraid监护模块已初始化 @ {self.unraid_host}")
+        else:
+            logger.warning("Unraid未配置，请在插件设置中配置unraid_host和api_key")
     
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_natural_language(self, event: AstrMessageEvent):
         """自然语言意图识别 - 匹配意图模式即响应"""
         msg = event.message_str.lower().strip()
         
-        # 先检查是否包含Unraid相关关键词（快速过滤）
-        unraid_keywords = ["unraid", "阵列", "硬盘", "磁盘", "服务器", 
-                          "docker", "容器", "硬件", "系统信息", "cpu", "内存", "温度"]
-        if not any(kw in msg for kw in unraid_keywords):
+        # 先检查是否包含Unraid相关关键词（快速过滤，避免误触发）
+        if not any(kw in msg for kw in self.unraid_keywords):
             return
         
         matched_intent = None
@@ -125,12 +131,15 @@ class UnraidManager(Star):
     
     async def _send_array_status(self, event: AstrMessageEvent):
         """阵列状态查看"""
+        if not self._config_ready:
+            yield event.plain_result("Unraid未配置，请使用 /plugin 命令配置 unraid_host 和 api_key")
+            return
         try:
             data = await self.unraid.get_array_status()
             
             if not isinstance(data, dict):
                 logger.error(f"阵列数据类型错误: {type(data)}")
-                yield event.plain_result("阵列数据格式异常")
+                yield event.plain_result("阵列数据格式异常，请检查API连接")
                 return
             
             array = data.get("array") or {}
@@ -184,13 +193,16 @@ class UnraidManager(Star):
                 temp_emoji = "🌡️" if temp > self.temp_threshold else "❄️"
                 disk_summary.append(f"  • {name}: {status} {temp_emoji}{temp}°C")
             
+            # 使用实际有效磁盘数量，而非len(disks)
+            valid_disk_count = len(disk_summary)
+            
             msg = f"""【阵列监测报告】
 
 阵列状态: {state_emoji}
 存储空间: {used_gb:.1f}GB / {total_gb:.1f}GB ({usage_pct:.1f}%)
 剩余可用: {free_gb:.1f}GB
 
-磁盘详情 ({len(disks)}块):
+磁盘详情 ({valid_disk_count}块):
 {chr(10).join(disk_summary) if disk_summary else "  (无磁盘数据)"}
 
 RAID心跳: {'正常' if state == 'STARTED' else '异常'}"""
@@ -204,22 +216,26 @@ RAID心跳: {'正常' if state == 'STARTED' else '异常'}"""
                 
         except Exception as e:
             logger.error(f"阵列状态获取失败: {e}")
-            yield event.plain_result(f"...阵列连接中断: {str(e)[:80]}")
+            # 对外统一友好文案，详细错误仅写日志
+            yield event.plain_result("阵列状态获取失败，请检查网络连接和API配置")
     
     async def _send_disk_temperature(self, event: AstrMessageEvent):
         """磁盘温度监控"""
+        if not self._config_ready:
+            yield event.plain_result("Unraid未配置，请使用 /plugin 命令配置 unraid_host 和 api_key")
+            return
         try:
             data = await self.unraid.get_array_status()
             
             if not isinstance(data, dict):
-                yield event.plain_result("...数据格式错误")
+                yield event.plain_result("数据格式错误，请稍后重试")
                 return
             
             array = data.get("array") or {}
             disks = array.get("disks") or []
             
             if not disks:
-                yield event.plain_result("...检测不到磁盘")
+                yield event.plain_result("未检测到磁盘，请检查阵列状态")
                 return
             
             temp_lines = []
@@ -257,7 +273,7 @@ RAID心跳: {'正常' if state == 'STARTED' else '异常'}"""
             
         except Exception as e:
             logger.error(f"温度监控失败: {e}")
-            yield event.plain_result("温度传感器离线")
+            yield event.plain_result("温度监控服务暂时不可用，请稍后重试")
     
     async def _send_docker_status(self, event: AstrMessageEvent):
         """Docker资源监控"""
@@ -265,7 +281,7 @@ RAID心跳: {'正常' if state == 'STARTED' else '异常'}"""
             containers_stats = await self.docker.get_containers_stats()
             
             if not containers_stats:
-                yield event.plain_result("...Docker守护进程无响应")
+                yield event.plain_result("Docker守护进程无响应，请检查socket挂载")
                 return
             
             lines = []
@@ -313,21 +329,24 @@ RAID心跳: {'正常' if state == 'STARTED' else '异常'}"""
             
         except Exception as e:
             logger.error(f"Docker监控失败: {e}")
-            yield event.plain_result("容器监控失败")
+            yield event.plain_result("容器监控服务暂时不可用")
     
     async def _send_hardware_info(self, event: AstrMessageEvent):
         """硬件信息读取"""
+        if not self._config_ready:
+            yield event.plain_result("Unraid未配置，请使用 /plugin 命令配置 unraid_host 和 api_key")
+            return
         try:
             data = await self.unraid.get_system_info()
             
             if not isinstance(data, dict):
                 logger.error(f"系统信息类型错误: {type(data)}")
-                yield event.plain_result("...硬件数据格式异常")
+                yield event.plain_result("硬件数据格式异常")
                 return
             
             info = data.get("info") or {}
             if not isinstance(info, dict):
-                yield event.plain_result("...信息结构异常")
+                yield event.plain_result("信息结构异常")
                 return
             
             os_info = info.get("os") or {}
@@ -379,7 +398,7 @@ RAID控制器: 心跳正常
             
         except Exception as e:
             logger.error(f"硬件信息获取失败: {e}")
-            yield event.plain_result("硬件自检中断")
+            yield event.plain_result("硬件信息获取失败，请检查API连接")
     
     def _format_uptime(self, seconds: int) -> str:
         """格式化运行时间"""
