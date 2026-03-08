@@ -25,23 +25,43 @@ Unraid 服务器安全管理插件，提供只读监控功能，支持自然语�
 
 ---
 
-## 配置说明
+## 配置步骤
 
-在 AstrBot 插件配置中设置：
+### 1. 获取 Unraid API Key
 
-| 配置项 | 说明 | 默认值 |
-|--------|------|--------|
-| `unraid_host` | Unraid 服务器地址 | `http://your-unraid-ip` |
+1. 登录 Unraid WebUI
+2. 进入 **Settings → Management Access → API Keys**
+3. 点击 **Add API Key**
+4. 角色选择 `admin` 或 `guest`
+5. 复制生成的密钥
+
+### 2. 配置插件
+
+**方式一：AstrBot WebUI（推荐）**
+
+1. 打开 AstrBot 管理面板
+2. 进入 **插件管理**
+3. 找到 `unraid_manager` 插件，点击 **配置**
+4. 填写以下字段：
+
+| 配置项 | 说明 | 示例 |
+|--------|------|------|
+| `unraid_host` | Unraid 服务器地址 | `http://192.168.1.100` |
 | `unraid_port` | WebUI 端口 | `80` |
-| `api_key` | GraphQL API 密钥 | 从环境变量读取 |
+| `api_key` | GraphQL API 密钥 | `xunraid-api-key-xxxxx` |
 | `temp_threshold` | 磁盘温度告警阈值(°C) | `45` |
 
-**环境变量方式（推荐）**：
+5. 保存配置并重启插件
+
+**方式二：环境变量**
+
 ```bash
-UNRAID_HOST=http://your-unraid-ip
-UNRAID_PORT=80
-UNRAID_API_KEY=your_api_key_here
+export UNRAID_HOST=http://192.168.1.100
+export UNRAID_PORT=80
+export UNRAID_API_KEY=your_api_key_here
 ```
+
+> **注意**：未配置时插件会加载但功能不可用，使用指令时会提示配置。
 
 ---
 
@@ -72,25 +92,25 @@ UNRAID_API_KEY=your_api_key_here
 
 ## 安全声明
 
-本插件仅执行只读操作，**禁止**以下危险行为：
-- 停止/启动阵列
-- 格式化磁盘
-- 修改配置
-- 删除文件
+- 本插件**仅执行只读操作**，禁止以下危险行为：
+  - 停止/启动阵列
+  - 格式化磁盘
+  - 修改配置
+  - 删除文件
+- 建议使用 HTTPS 访问 Unraid API（配置 SSL 证书）
+- 请妥善保管 API 密钥
 
 ---
 
 ## 故障排查
 
-**问题：Docker 监控无数据**
-- 检查容器是否挂载 `/var/run/docker.sock`
-
-**问题：阵列状态显示 0GB**
-- 检查 API 密钥权限是否包含 `admin` 或 `guest`
-- 检查 Unraid 版本是否 6.12+ 且已启用 GraphQL API
-
-**问题：自然语言无响应**
-- 确保消息包含关键词：unraid、阵列、硬盘、磁盘、服务器、docker、容器、硬件
+| 问题 | 解决方案 |
+|------|----------|
+| **提示"Unraid未配置"** | 检查 `unraid_host` 和 `api_key` 是否已设置 |
+| **Docker 监控无数据** | 检查容器是否挂载 `/var/run/docker.sock` |
+| **阵列状态显示 0GB** | 检查 API 密钥权限是否为 `admin` |
+| **自然语言无响应** | 确保消息包含关键词：unraid、阵列、硬盘、磁盘、服务器、docker、容器、硬件 |
+| **连接超时** | 检查 Unraid 网络可达性，确认 GraphQL API 已启用 |
 
 ---
 
