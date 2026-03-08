@@ -1,0 +1,26 @@
+{
+    "unraid_host": {
+        "description": "Unraid服务器地址",
+        "type": "string",
+        "default": "http://your-unraid-ip",
+        "hint": "默认从环境变量读取"
+    },
+    "unraid_port": {
+        "description": "Unraid WebUI端口",
+        "type": "int",
+        "default": 80,
+        "hint": "通常是80或443"
+    },
+    "api_key": {
+        "description": "Unraid API密钥",
+        "type": "string",
+        "default": "",
+        "hint": "从环境变量UNRAID_API_KEY读取"
+    },
+    "temp_threshold": {
+        "description": "磁盘温度告警阈值",
+        "type": "int",
+        "default": 45,
+        "hint": "超过此温度会告警"
+    }
+}

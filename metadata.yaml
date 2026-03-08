@@ -1,0 +1,10 @@
+# unraid_manager/metadata.yaml
+name: unraid_manager
+desc: Unraid安全管理插件 - 阵列监护模块
+version: 1.0.0
+author: ludan
+support_platforms:
+  - aiocqhttp
+  - qq_official
+  - telegram
+astrbot_version: ">=4.0.0"
