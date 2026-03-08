@@ -3,7 +3,7 @@ import asyncio
 import aiohttp
 import json
 import os
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, List
 from astrbot.api import logger
 
 
@@ -11,14 +11,38 @@ class UnraidClient:
     """Unraid GraphQL API客户端"""
     
     def __init__(self, host: str = None, port: int = 80, api_key: str = None):
-        self.unraid_host = host or os.getenv("UNRAID_HOST", "http://your-unraid-ip")
+        self.unraid_host = host or os.getenv("UNRAID_HOST", "")
         self.unraid_port = port or int(os.getenv("UNRAID_PORT", "80"))
         self.api_key = api_key or os.getenv("UNRAID_API_KEY", "")
-        
-        self.base_url = f"{self.unraid_host}:{self.unraid_port}"
-        self.graphql_endpoint = f"{self.base_url}/graphql"
         self.session: Optional[aiohttp.ClientSession] = None
         
+        # 延迟校验：只有在实际使用时才检查配置
+        self._config_valid = None  # None=未检查, True=有效, False=无效
+    
+    def _validate_config(self) -> bool:
+        """校验配置是否有效"""
+        if self._config_valid is not None:
+            return self._config_valid
+            
+        if not self.unraid_host or self.unraid_host == "http://your-unraid-ip":
+            self._config_valid = False
+            return False
+        
+        # 检查HTTP明文传输风险
+        if self.unraid_host.startswith("http://") and not self.unraid_host.startswith("http://localhost"):
+            logger.warning("使用HTTP明文传输API密钥存在安全风险，建议配置HTTPS")
+        
+        if not self.api_key:
+            logger.warning("Unraid API密钥未配置，部分功能可能不可用")
+        
+        self._config_valid = True
+        return True
+    
+    def _init_queries(self):
+        """初始化GraphQL查询语句（延迟初始化）"""
+        if hasattr(self, 'queries'):
+            return
+            
         self.queries = {
             "array_status": """
                 query {
@@ -86,9 +110,27 @@ class UnraidClient:
     
     async def _query(self, query_name: str, variables: Dict = None) -> Optional[Dict]:
         """执行GraphQL查询"""
+        # 延迟校验配置
+        if not self._validate_config():
+            logger.error("Unraid未配置，请设置unraid_host和api_key")
+            return None
+        
+        # 初始化查询语句
+        self._init_queries()
+        
+        # 前置校验：检查查询名是否存在
+        query = self.queries.get(query_name)
+        if not query:
+            logger.error(f"查询名称 '{query_name}' 不存在")
+            return None
+        
+        # 初始化endpoint（延迟初始化）
+        if not hasattr(self, 'graphql_endpoint'):
+            self.base_url = f"{self.unraid_host}:{self.unraid_port}"
+            self.graphql_endpoint = f"{self.base_url}/graphql"
+        
         try:
             session = await self._get_session()
-            query = self.queries.get(query_name, "")
             
             payload = {
                 "query": query,
@@ -99,13 +141,13 @@ class UnraidClient:
                 text = await resp.text()
                 
                 if resp.status != 200:
-                    logger.error(f"GraphQL HTTP错误: {resp.status} - {text[:200]}")
+                    logger.error(f"GraphQL HTTP错误: {resp.status}")
                     return None
                 
                 try:
                     data = json.loads(text)
                 except json.JSONDecodeError as e:
-                    logger.error(f"JSON解析失败: {e}, 返回: {text[:500]}")
+                    logger.error(f"JSON解析失败: {e}")
                     return None
                 
                 if "errors" in data:
@@ -114,7 +156,7 @@ class UnraidClient:
                 
                 result = data.get("data")
                 if not isinstance(result, dict):
-                    logger.error(f"返回数据不是字典: {type(result)} - {str(result)[:200]}")
+                    logger.error(f"返回数据类型错误: {type(result)}")
                     return None
                     
                 return result
@@ -123,7 +165,7 @@ class UnraidClient:
             logger.error(f"查询 {query_name} 超时")
             return None
         except Exception as e:
-            logger.error(f"查询 {query_name} 异常: {e}")
+            logger.error(f"查询 {query_name} 异常: {type(e).__name__}")
             return None
     
     async def get_array_status(self) -> Optional[Dict]:
@@ -172,7 +214,7 @@ class UnraidClient:
                 "free": mem_available
             }
         except Exception as e:
-            logger.error(f"读取内存信息失败: {e}")
+            logger.error(f"读取内存信息失败: {type(e).__name__}")
             return {"total": 0, "used": 0, "free": 0}
     
     async def close(self):
